@@ -1,27 +1,29 @@
 {
-	"name": "hello-effect",
-	"dockerComposeFile": "compose.yml",
-	"service": "devcontainer",
-	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-	"remoteUser": "root",
-	"features": {
-		"ghcr.io/esimkowitz/devcontainer-features/fish-starship:1": {},
-		"ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
-		"ghcr.io/stu-bell/devcontainer-features/claude-code:0": {},
-		"ghcr.io/esimkowitz/devcontainer-features/claude-code-persistence:1": {},
-		"ghcr.io/devcontainers/features/github-cli:1": {},
-		"ghcr.io/ksachdeva/devcontainer-features/natscli:1": {}
-	},
-	"customizations": {
-		"vscode": {
-			"extensions": [
-				"oven.bun-vscode",
-				"usernamehw.errorlens",
-				"tamasfe.even-better-toml",
-				"Anthropic.claude-code",
-				"mhutchie.git-graph"
-			]
-		}
-	},
-	"forwardPorts": [5432, 5050, 4222, 8222, 31311, 3000]
+  "name": "hello-effect",
+  "dockerComposeFile": "compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "remoteUser": "root",
+  "features": {
+    "ghcr.io/esimkowitz/devcontainer-features/fish-starship:1": {},
+    "ghcr.io/stuartleeks/dev-container-features/shell-history:0": {},
+    "ghcr.io/stu-bell/devcontainer-features/claude-code:0": {},
+    "ghcr.io/esimkowitz/devcontainer-features/claude-code-persistence:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/ksachdeva/devcontainer-features/natscli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "oven.bun-vscode",
+        "usernamehw.errorlens",
+        "tamasfe.even-better-toml",
+        "Anthropic.claude-code",
+        "mhutchie.git-graph",
+        "esbenp.prettier-vscode",
+        "effectful-tech.effect-vscode"
+      ]
+    }
+  },
+  "forwardPorts": [5432, 5050, 4222, 8222, 31311, 3000]
 }

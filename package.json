@@ -1,0 +1,18 @@
+{
+  "name": "hello-effect",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@effect/language-service": "^0.85.1",
+    "@types/bun": "latest",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "effect": "^3.21.2"
+  },
+  "scripts": {
+    "fmt": "prettier --write ./src"
+  }
+}
