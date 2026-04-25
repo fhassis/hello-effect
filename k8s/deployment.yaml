@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-pc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simple-pc
+  template:
+    metadata:
+      labels:
+        app: simple-pc
+    spec:
+      containers:
+        - name: app
+          image: simple-pc:v1
+          imagePullPolicy: Never
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
