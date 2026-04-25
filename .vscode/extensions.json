@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "oven.bun-vscode",
+    "usernamehw.errorlens",
+    "tamasfe.even-better-toml",
+    "Anthropic.claude-code",
+    "mhutchie.git-graph",
+    "esbenp.prettier-vscode",
+    "effectful-tech.effect-vscode"
+  ]
+}
