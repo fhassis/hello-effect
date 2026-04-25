@@ -13,6 +13,7 @@
     "effect": "^3.21.2"
   },
   "scripts": {
-    "fmt": "prettier --write ./src"
+    "fmt": "prettier --write ./src",
+    "spc": "bun run --watch src/simple_producer_consumer/index.ts"
   }
 }
