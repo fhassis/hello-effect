@@ -1,25 +1,26 @@
 # Observability Stack
 
-Single-replica, non-HA Grafana stack (Prometheus, Loki, Tempo, Grafana, Alloy) deployed as four Helm releases into the `observability` namespace.
+Single-replica, non-HA Grafana stack deployed as five Helm releases into the `observability` namespace. Collection is owned by `grafana/k8s-monitoring`; each backend (Prometheus, Loki, Tempo, Grafana) is its own independent chart.
 
-The same values files are intended to work across all current target environments:
+Target environments:
 
 - `k3d-dev` (local single node)
 - Single-node VPS running k3s
 - 5-node k3s cluster
 
-All three rely on the `local-path` StorageClass (default in k3s/k3d) and use single-replica filesystem storage. No object store, no Memcached, no Ingress.
+All rely on the `local-path` StorageClass (default in k3s/k3d) and single-replica filesystem storage.
 
 ## Components
 
 | Release | Chart | Role |
 |---|---|---|
-| `kps`   | `prometheus-community/kube-prometheus-stack` | Prometheus + Grafana + Operator CRDs (`ServiceMonitor`/`PodMonitor`) + node-exporter + kube-state-metrics |
-| `loki`  | `grafana/loki` (SingleBinary) | Log storage + query |
+| `prometheus` | `prometheus-community/prometheus` | Metrics storage — plain server, remote-write receiver enabled |
+| `loki` | `grafana/loki` (SingleBinary) | Log storage + query |
 | `tempo` | `grafana/tempo` (single binary, **deprecated** — see note in [tempo.values.yaml](tempo.values.yaml)) | Trace storage + query, OTLP receiver on 4317/4318 |
-| `alloy` | `grafana/alloy` (DaemonSet) | Tails pod logs to Loki, accepts OTLP traces and forwards to Tempo |
+| `grafana` | `grafana/grafana` | UI — datasources pre-wired for Prometheus, Loki, Tempo |
+| `k8s-monitoring` | `grafana/k8s-monitoring` | Unified collection: Alloy DaemonSet + singleton, node-exporter, kube-state-metrics, OTLP receiver for apps |
 
-Metrics scraping is owned by `kube-prometheus-stack` (via the Prometheus Operator). Alloy is logs + traces only.
+`k8s-monitoring` installs the Alloy Operator as a dependency and deploys node-exporter + kube-state-metrics via its own subcharts — no separate charts needed for those.
 
 ## Install
 
@@ -32,92 +33,126 @@ helm repo update
 # 2. Create namespace
 kubectl create namespace observability
 
-# 3. Install (order matters: Loki + Tempo before Alloy so its targets exist)
-helm install kps   prometheus-community/kube-prometheus-stack \
-  -n observability -f k3d/observability/kube-prometheus-stack.values.yaml
+# 3. Install backends first
+helm install prometheus prometheus-community/prometheus \
+  -n observability -f k3d/observability/prometheus.values.yaml
 
-helm install loki  grafana/loki \
+helm install loki grafana/loki \
   -n observability -f k3d/observability/loki.values.yaml
 
 helm install tempo grafana/tempo \
   -n observability -f k3d/observability/tempo.values.yaml
 
-helm install alloy grafana/alloy \
-  -n observability -f k3d/observability/alloy.values.yaml
+helm install grafana grafana/grafana \
+  -n observability -f k3d/observability/grafana.values.yaml
 
-# 4. Watch pods come up
+# 4. Install collection last (backends must be reachable)
+helm install k8s-monitoring grafana/k8s-monitoring \
+  -n observability -f k3d/observability/k8s-monitoring.values.yaml
+
+# 5. Watch pods come up
 kubectl -n observability get pods -w
 ```
 
 ## Access Grafana
 
 ```bash
-kubectl -n observability port-forward svc/kps-grafana 3000:80
+kubectl -n observability port-forward svc/grafana 3000:80
 ```
 
 Open <http://localhost:3000> — log in as `admin` / `admin`.
 
-Then go to **Connections → Data sources** and confirm three healthy data sources:
-
-- **Prometheus** (auto-wired by kube-prometheus-stack)
-- **Loki**  → `http://loki.observability.svc.cluster.local:3100`
-- **Tempo** → `http://tempo.observability.svc.cluster.local:3100`
+Go to **Connections → Data sources** to confirm three healthy datasources: Prometheus, Loki, Tempo.
 
 Quick smoke tests in **Explore**:
 
-- Prometheus: `up` should return >0 series.
-- Loki: `{namespace="kube-system"}` should return logs.
-- Tempo: empty until an app sends traces (next milestone).
+- Prometheus: `count(up)` should return ≥ 3 series.
+- Loki: `{namespace="kube-system"}` should return logs with `namespace`, `pod`, `container` labels.
+- Tempo: empty until an app sends a trace.
 
 ## Send a trace from a workload
 
-Apps in any namespace can ship OTLP traces to Alloy:
+Apps send OTLP to the Alloy singleton Service (DaemonSet handles node-local scraping, singleton handles OTLP reception):
 
 | Protocol | Endpoint |
 |---|---|
-| OTLP gRPC | `alloy.observability.svc.cluster.local:4317` |
-| OTLP HTTP | `alloy.observability.svc.cluster.local:4318` |
+| OTLP gRPC | `k8s-monitoring-alloy-singleton.observability.svc.cluster.local:4317` |
+| OTLP HTTP | `k8s-monitoring-alloy-singleton.observability.svc.cluster.local:4318` |
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` (or the SDK equivalent) to one of those.
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` in your workload to one of those.
+
+Alloy enriches every span with `k8s.cluster.name`, `k8s.namespace.name`, `k8s.pod.name`, and `k8s.node.name` via `k8sattributes` processor.
 
 ## Uninstall
 
 ```bash
-helm uninstall alloy tempo loki kps -n observability
+helm uninstall k8s-monitoring grafana tempo loki prometheus -n observability
 kubectl delete namespace observability
 ```
 
-The `kube-prometheus-stack` chart leaves CRDs behind on uninstall (intentional — they may be in use by other charts). Remove them manually if you want a fully clean slate:
+The Alloy Operator CRDs installed by k8s-monitoring remain after uninstall. Remove them for a full cleanup:
 
 ```bash
-kubectl get crd -o name | grep monitoring.coreos.com | xargs kubectl delete
+kubectl get crd -o name | grep alloy | xargs kubectl delete
+```
+
+## Grafana Cloud portability
+
+To switch any environment to Grafana Cloud, edit only `k8s-monitoring.values.yaml`:
+
+1. Replace the three `destinations` URLs with Grafana Cloud endpoints.
+2. Add `auth` blocks with your Grafana Cloud credentials.
+3. Skip installing (or uninstall) prometheus / loki / tempo / grafana — the Cloud provides those.
+4. App workloads need no changes.
+
+```yaml
+# Example Grafana Cloud destinations (replace in-cluster URLs with these)
+destinations:
+  - name: prometheus
+    type: prometheus
+    url: https://prometheus-prod-XX.grafana.net/api/prom/push
+    auth:
+      type: basic
+      username: "<cloud-prometheus-id>"
+      password: "<cloud-api-key>"
+  - name: loki
+    type: loki
+    url: https://logs-prod-XX.grafana.net/loki/api/v1/push
+    auth:
+      type: basic
+      username: "<cloud-loki-id>"
+      password: "<cloud-api-key>"
+  - name: tempo
+    type: otlp
+    url: tempo-prod-XX.grafana.net:443
+    protocol: grpc
+    auth:
+      type: basic
+      username: "<cloud-tempo-id>"
+      password: "<cloud-api-key>"
+    traces:
+      enabled: true
 ```
 
 ## Secrets
 
-Deliberately simple. The only secret in this stack right now is the Grafana admin password, and on `k3d-dev` it's a throwaway `admin/admin` committed inline in [kube-prometheus-stack.values.yaml](kube-prometheus-stack.values.yaml). That's fine because:
-
-- It's a well-known dev default, not a real credential.
-- Self-documenting and reproducible — `git clone` + `helm install` works with no out-of-band steps.
+The Grafana admin password is committed as `admin` in [grafana.values.yaml](grafana.values.yaml) — a throwaway dev default.
 
 **Switch to a real secrets tool when any of these become true:**
 
 - This repo goes public.
-- The VPS exposes Grafana on a public IP — `admin/admin` becomes a real exposure.
-- A genuine credential enters the stack (S3 / GCS keys for Loki or Tempo storage, OAuth client secret, SMTP creds for alerting).
+- Grafana is exposed on a public IP.
+- Real credentials enter the stack (Grafana Cloud API keys, OAuth, SMTP).
 
-Migration path: **SOPS + [age](https://github.com/FiloSottile/age) + the [`helm-secrets`](https://github.com/jkroepke/helm-secrets) plugin**. Encrypted values files committed to git, decrypted at apply time, same key works across all environments. No in-cluster controller. Base `*.values.yaml` files stay committable; encrypted overrides go in `values-prod.yaml`-style overlays.
-
-External Secrets Operator (ESO) comes later if/when a Vault or cloud secrets manager is available.
+Migration path: **SOPS + [age](https://github.com/FiloSottile/age) + [`helm-secrets`](https://github.com/jkroepke/helm-secrets)**. Encrypt the sensitive values file, commit it, decrypt at apply time. The base `*.values.yaml` files stay committable.
 
 ## Adapting for VPS / work cluster
 
-The base values are environment-agnostic. Likely later additions per environment (out of scope for now):
+The base values are environment-agnostic. Likely additions per environment (out of scope for now):
 
-- Ingress + TLS for Grafana (and maybe Tempo/Loki APIs).
+- Ingress + TLS for Grafana.
 - Real Grafana admin password (see **Secrets** above).
 - Larger PVC sizes and longer Prometheus retention.
-- `alertmanager.enabled: true` once alerting rules exist.
-- Replace local PVC storage with S3-compatible object storage for Loki/Tempo if retention grows.
-
-These belong in a per-environment overlay (e.g. `values-prod.yaml`) passed with a second `-f` flag — the base files stay untouched.
+- `alertmanager.enabled: true` in prometheus.values.yaml once alerting rules exist.
+- Object storage for Loki/Tempo when retention grows beyond a single PVC.
+- Grafana Cloud migration for the VPS (see **Grafana Cloud portability** above).
