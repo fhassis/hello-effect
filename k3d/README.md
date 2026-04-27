@@ -15,3 +15,7 @@ k3d cluster create --config k3d/dev.yaml
 ```bash
 k3d cluster delete k3d-dev
 ```
+
+## Observability
+
+Helm values for the Grafana observability stack (Prometheus, Loki, Tempo, Grafana, Alloy) live in [observability/](observability/). See [observability/README.md](observability/README.md) for install and access instructions.

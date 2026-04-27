@@ -1,0 +1,109 @@
+# Alloy values
+# Chart: grafana/alloy
+#
+# DaemonSet — one pod per node — handling two pipelines:
+#   1. Tail every pod's logs via the Kubernetes API and ship to Loki.
+#   2. Receive OTLP traces (gRPC 4317 / HTTP 4318) and forward to Tempo.
+#
+# Metrics scraping stays with kube-prometheus-stack (Prometheus Operator),
+# so Alloy stays focused on logs + traces here.
+
+controller:
+  type: daemonset
+
+# Expose OTLP receiver ports on the Service so workloads in other
+# namespaces can send traces to alloy.observability.svc:4317 / :4318
+alloy:
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  configMap:
+    create: true
+    content: |-
+      // ============================================================
+      // LOGS: Kubernetes pod logs -> Loki
+      // ============================================================
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_name"]
+          separator     = "/"
+          target_label  = "job"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.write.default.receiver]
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.observability.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }
+
+      // ============================================================
+      // TRACES: OTLP receiver -> Tempo
+      // ============================================================
+
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+        output {
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "tempo.observability.svc.cluster.local:4317"
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+# RBAC (chart default = create) gives Alloy read access to pods + pods/log,
+# which loki.source.kubernetes needs.
+rbac:
+  create: true
+serviceAccount:
+  create: true
+
+# No self-monitoring ServiceMonitor for now.
+serviceMonitor:
+  enabled: false
